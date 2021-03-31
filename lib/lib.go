@@ -63,7 +63,7 @@ func PlanRestore(ctx *context.Context, bucket *storage.BucketHandle, restoreTime
 			// check if the content and metadata are the same
 			if restoreAttrs.CRC32C != currentAttrs.CRC32C {
 				planElements[name] = PlanElement{RestoreObject, restoreAttrs, currentAttrs}
-			} else if !reflect.DeepEqual(restoreAttrs.Metadata, currentAttrs.Metadata) {
+			} else if !FullMetadataEqual(restoreAttrs, currentAttrs) {
 				planElements[name] = PlanElement{RestoreMetadata, restoreAttrs, currentAttrs}
 			}
 		} else {
@@ -123,3 +123,37 @@ type PlanElement struct {
 }
 
 //go:generate stringer -type=Action
+
+func FullMetadataEqual(attrs1 *storage.ObjectAttrs, attrs2 *storage.ObjectAttrs) bool {
+	if !reflect.DeepEqual(attrs1.Metadata, attrs2.Metadata) {
+		return false
+	}
+	if attrs1.ContentType != attrs2.ContentType {
+		return false
+	}
+	if attrs1.ContentLanguage != attrs2.ContentLanguage {
+		return false
+	}
+	if attrs1.CacheControl != attrs2.CacheControl {
+		return false
+	}
+	if !reflect.DeepEqual(attrs1.ACL, attrs2.ACL) {
+		return false
+	}
+	if attrs1.Owner != attrs2.Owner {
+		return false
+	}
+	if attrs1.ContentEncoding != attrs2.ContentEncoding {
+		return false
+	}
+	if attrs1.CustomerKeySHA256 != attrs2.CustomerKeySHA256 {
+		return false
+	}
+	if attrs1.KMSKeyName != attrs2.KMSKeyName {
+		return false
+	}
+	if attrs1.CustomTime != attrs2.CustomTime {
+		return false
+	}
+	return true
+}
