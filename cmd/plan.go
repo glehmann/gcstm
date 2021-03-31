@@ -25,21 +25,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// lsCmd represents the ls command
-var lsCmd = &cobra.Command{
-	Use:   "ls bucket time",
-	Short: "list the content of a bucket at a point in time",
-	Args:  cobra.ExactArgs(2),
-	Run:   lsRun,
+// planCmd represents the plan command
+var planCmd = &cobra.Command{
+	Use:   "plan bucket time",
+	Short: "Show what a restore would do at a specific time",
+	Run:   planRun,
 }
 
 func init() {
-	rootCmd.AddCommand(lsCmd)
-	lsCmd.Flags().BoolP("long", "l", false, "Use a long listing format")
+	rootCmd.AddCommand(planCmd)
 }
 
-func lsRun(cmd *cobra.Command, args []string) {
-	restoreTime, err := lib.ParseTime(args[1])
+func planRun(cmd *cobra.Command, args []string) {
+	planTime, err := lib.ParseTime(args[1])
 	if err != nil {
 		log.WithError(err).Fatal("Can't parse time")
 	}
@@ -51,20 +49,12 @@ func lsRun(cmd *cobra.Command, args []string) {
 	defer client.Close()
 	bucket := client.Bucket(args[0])
 
-	objectsAtRestoreTime, err := lib.ListObjectsAtRestoreTime(&ctx, bucket, restoreTime)
+	planElements, err := lib.PlanRestore(&ctx, bucket, planTime)
 	if err != nil {
-		log.WithError(err).Fatal("Listing bucket's objects failed")
+		log.WithError(err).Fatal("Planning for restore failed")
 	}
 
-	if longStatus, err := cmd.Flags().GetBool("long"); err != nil {
-		log.WithError(err).Fatal("Getting flag 'long' failed")
-	} else if longStatus {
-		for name, attrs := range objectsAtRestoreTime {
-			fmt.Println(name, attrs.Deleted.IsZero(), attrs.Updated)
-		}
-	} else {
-		for name := range objectsAtRestoreTime {
-			fmt.Println(name)
-		}
+	for name, planElement := range planElements {
+		fmt.Println(name, planElement.Action)
 	}
 }

@@ -3,13 +3,14 @@ package lib
 import (
 	"context"
 	"errors"
+	"reflect"
 	"time"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
 )
 
-func ListObjectAtRestoreTime(ctx *context.Context, bucket *storage.BucketHandle, restoreTime time.Time) (map[string]*storage.ObjectAttrs, error) {
+func ListObjectsAtRestoreTime(ctx *context.Context, bucket *storage.BucketHandle, restoreTime time.Time) (map[string]*storage.ObjectAttrs, error) {
 	query := &storage.Query{Prefix: "", Versions: true}
 	it := bucket.Objects(*ctx, query)
 	objects := map[string]*storage.ObjectAttrs{}
@@ -19,7 +20,7 @@ func ListObjectAtRestoreTime(ctx *context.Context, bucket *storage.BucketHandle,
 			break
 		}
 		if err != nil {
-			return map[string]*storage.ObjectAttrs{}, nil
+			return map[string]*storage.ObjectAttrs{}, err
 		}
 		if (attrs.Updated.Before(restoreTime) || attrs.Updated.Equal(restoreTime)) &&
 			(restoreTime.Before(attrs.Deleted) || attrs.Deleted.IsZero()) {
@@ -27,6 +28,54 @@ func ListObjectAtRestoreTime(ctx *context.Context, bucket *storage.BucketHandle,
 		}
 	}
 	return objects, nil
+}
+
+func ListCurrentObjects(ctx *context.Context, bucket *storage.BucketHandle) (map[string]*storage.ObjectAttrs, error) {
+	query := &storage.Query{Prefix: ""}
+	it := bucket.Objects(*ctx, query)
+	objects := map[string]*storage.ObjectAttrs{}
+	for {
+		attrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return map[string]*storage.ObjectAttrs{}, err
+		}
+		objects[attrs.Name] = attrs
+	}
+	return objects, nil
+}
+
+func PlanRestore(ctx *context.Context, bucket *storage.BucketHandle, restoreTime time.Time) (map[string]PlanElement, error) {
+	restoreObjects, err := ListObjectsAtRestoreTime(ctx, bucket, restoreTime)
+	if err != nil {
+		return map[string]PlanElement{}, err
+	}
+	currentObjects, err := ListCurrentObjects(ctx, bucket)
+	if err != nil {
+		return map[string]PlanElement{}, err
+	}
+	planElements := map[string]PlanElement{}
+	for name, restoreAttrs := range restoreObjects {
+		currentAttrs, ok := currentObjects[name]
+		if ok {
+			// check if the content and metadata are the same
+			if restoreAttrs.CRC32C != currentAttrs.CRC32C {
+				planElements[name] = PlanElement{RestoreObject, restoreAttrs, currentAttrs}
+			} else if !reflect.DeepEqual(restoreAttrs.Metadata, currentAttrs.Metadata) {
+				planElements[name] = PlanElement{RestoreMetadata, restoreAttrs, currentAttrs}
+			}
+		} else {
+			planElements[name] = PlanElement{RestoreObject, restoreAttrs, nil}
+		}
+	}
+	for name, currentAttrs := range currentObjects {
+		if _, ok := restoreObjects[name]; !ok {
+			planElements[name] = PlanElement{Delete, nil, currentAttrs}
+		}
+	}
+	return planElements, nil
 }
 
 var timeFormats = []string{
@@ -58,3 +107,19 @@ func ParseTime(timeStr string) (time.Time, error) {
 	}
 	return time.Time{}, errors.New("No matching format found")
 }
+
+type Action int
+
+const (
+	RestoreObject Action = iota
+	RestoreMetadata
+	Delete
+)
+
+type PlanElement struct {
+	Action       Action
+	RestoreAttrs *storage.ObjectAttrs
+	CurrentAttrs *storage.ObjectAttrs
+}
+
+//go:generate stringer -type=Action
